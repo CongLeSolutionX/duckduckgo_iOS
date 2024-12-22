@@ -83,7 +83,9 @@ import os.log
     private var syncStateCancellable: AnyCancellable?
     private var isSyncInProgressCancellable: AnyCancellable?
 
-    private let crashCollection = CrashCollection(platform: .iOS)
+    private let crashCollection = CrashCollection(crashReportSender: CrashReportSender(platform: .iOS,
+                                                                                       pixelEvents: CrashReportSender.pixelEvents),
+                                                  crashCollectionStorage: UserDefaults())
     private var crashReportUploaderOnboarding: CrashCollectionOnboarding?
 
     private var autofillPixelReporter: AutofillPixelReporter?
@@ -179,7 +181,8 @@ import os.log
             Configuration.setURLProvider(AppConfigurationURLProvider())
         }
 
-        crashCollection.startAttachingCrashLogMessages { pixelParameters, payloads, sendReport in
+        crashCollection.startAttachingCrashLogMessages { [weak self] pixelParameters, payloads, sendReport in
+            self?.didReceiveMXPayloadTimestamp = Date()
             pixelParameters.forEach { params in
                 Pixel.fire(pixel: .dbCrashDetected, withAdditionalParameters: params, includedParameters: [])
 
@@ -196,11 +199,11 @@ import os.log
 
             // Async dispatch because rootViewController may otherwise be nil here
             DispatchQueue.main.async {
-                guard let viewController = self.window?.rootViewController else { return }
+                guard let viewController = self?.window?.rootViewController else { return }
 
                 let crashReportUploaderOnboarding = CrashCollectionOnboarding(appSettings: AppDependencyProvider.shared.appSettings)
                 crashReportUploaderOnboarding.presentOnboardingIfNeeded(for: payloads, from: viewController, sendReport: sendReport)
-                self.crashReportUploaderOnboarding = crashReportUploaderOnboarding
+                self?.crashReportUploaderOnboarding = crashReportUploaderOnboarding
             }
         }
 
@@ -917,7 +920,7 @@ import os.log
     func application(_ application: UIApplication, performFetchWithCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
 
         Logger.lifecycle.debug(#function)
-
+        didPerformFetchTimestamp = Date()
         AppConfigurationFetch().start(isBackgroundFetch: true) { result in
             switch result {
             case .noData:
@@ -1108,7 +1111,7 @@ import os.log
         autofillPixelReporter = AutofillPixelReporter(
             userDefaults: .standard,
             autofillEnabled: AppDependencyProvider.shared.appSettings.autofillCredentialsEnabled,
-            eventMapping: EventMapping<AutofillPixelEvent> {event, _, params, _ in
+            eventMapping: EventMapping<AutofillPixelEvent> {[weak self] event, _, params, _ in
                 switch event {
                 case .autofillActiveUser:
                     Pixel.fire(pixel: .autofillActiveUser)
@@ -1118,8 +1121,16 @@ import os.log
                     Pixel.fire(pixel: .autofillOnboardedUser)
                 case .autofillToggledOn:
                     Pixel.fire(pixel: .autofillToggledOn, withAdditionalParameters: params ?? [:])
+                    if let autofillExtensionToggled = self?.autofillUsageMonitor.autofillExtensionEnabled {
+                        Pixel.fire(pixel: autofillExtensionToggled ? .autofillExtensionToggledOn : .autofillExtensionToggledOff,
+                                   withAdditionalParameters: params ?? [:])
+                    }
                 case .autofillToggledOff:
                     Pixel.fire(pixel: .autofillToggledOff, withAdditionalParameters: params ?? [:])
+                    if let autofillExtensionToggled = self?.autofillUsageMonitor.autofillExtensionEnabled {
+                        Pixel.fire(pixel: autofillExtensionToggled ? .autofillExtensionToggledOn : .autofillExtensionToggledOff,
+                                   withAdditionalParameters: params ?? [:])
+                    }
                 case .autofillLoginsStacked:
                     Pixel.fire(pixel: .autofillLoginsStacked, withAdditionalParameters: params ?? [:])
                 default:
@@ -1156,6 +1167,21 @@ import os.log
             UIApplication.shared.shortcutItems = nil
         }
     }
+
+    var didReceiveMemoryWarningTimestamp: Date?
+    func applicationDidReceiveMemoryWarning(_ application: UIApplication) {
+        didReceiveMemoryWarningTimestamp = Date()
+    }
+    var didReceiveMXPayloadTimestamp: Date?
+    var didReceiveUNNotificationTimestamp: Date?
+    var didStartRemoteMessagingClientBackgroundTaskTimestamp: Date? {
+        remoteMessagingClient.didStartBackgroundTaskTimestamp
+    }
+    var didStartAppConfigurationFetchBackgroundTaskTimestamp: Date? {
+        AppConfigurationFetch.didStartBackgroundTaskTimestamp
+    }
+
+    var didPerformFetchTimestamp: Date?
 }
 
 extension AppDelegate: BlankSnapshotViewRecoveringDelegate {
@@ -1208,6 +1234,7 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 didReceive response: UNNotificationResponse,
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
+        didReceiveUNNotificationTimestamp = Date()
         if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
             let identifier = response.notification.request.identifier
 

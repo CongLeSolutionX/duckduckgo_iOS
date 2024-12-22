@@ -22,6 +22,7 @@ import SwiftUI
 import BrowserServicesKit
 import Core
 import Common
+import os.log
 
 class CredentialProviderViewController: ASCredentialProviderViewController {
 
@@ -37,7 +38,11 @@ class CredentialProviderViewController: ASCredentialProviderViewController {
                                                                                                                                       tld: tld)
 
     private lazy var secureVault: (any AutofillSecureVault)? = {
-        try? AutofillSecureVaultFactory.makeVault(reporter: SecureVaultReporter())
+        if findKeychainItemsWithV4() {
+            return try? AutofillSecureVaultFactory.makeVault(reporter: SecureVaultReporter())
+        } else {
+            return nil
+        }
     }()
 
     private lazy var tld: TLD = TLD()
@@ -110,28 +115,43 @@ class CredentialProviderViewController: ASCredentialProviderViewController {
         installChildViewController(hostingController)
 
         Task {
-            await credentialIdentityStoreManager.populateCredentialStore()
+            if findKeychainItemsWithV4() {
+                await credentialIdentityStoreManager.populateCredentialStore()
+            }
         }
+
+        Pixel.fire(pixel: .autofillExtensionEnabled)
+    }
+
+    @available(iOSApplicationExtension 18.0, *)
+    override func prepareInterfaceForUserChoosingTextToInsert() {
+        loadCredentialsList(for: [], shouldProvideTextToInsert: true)
     }
 
     // MARK: - Private
 
-    private func loadCredentialsList(for serviceIdentifiers: [ASCredentialServiceIdentifier], returnString: Bool = false) {
+    private func loadCredentialsList(for serviceIdentifiers: [ASCredentialServiceIdentifier], shouldProvideTextToInsert: Bool = false) {
         let credentialProviderListViewController = CredentialProviderListViewController(serviceIdentifiers: serviceIdentifiers,
                                                                                         secureVault: secureVault,
                                                                                         credentialIdentityStoreManager: credentialIdentityStoreManager,
+                                                                                        shouldProvideTextToInsert: shouldProvideTextToInsert,
+                                                                                        tld: tld,
                                                                                         onRowSelected: { [weak self] item in
-                                                                                            guard let self = self else {
-                                                                                                self?.extensionContext.cancelRequest(withError: NSError(domain: ASExtensionErrorDomain,
-                                                                                                                                                        code: ASExtensionError.failed.rawValue))
-                                                                                                return
-                                                                                            }
+            guard let self = self else {
+                self?.extensionContext.cancelRequest(withError: NSError(domain: ASExtensionErrorDomain,
+                                                                        code: ASExtensionError.failed.rawValue))
+                return
+            }
 
-                                                                                            let credential = self.vaultCredentialManager.fetchCredential(for: item.account)
+            let credential = self.vaultCredentialManager.fetchCredential(for: item.account)
 
-                                                                                            self.extensionContext.completeRequest(withSelectedCredential: credential, completionHandler: nil)
+            self.extensionContext.completeRequest(withSelectedCredential: credential, completionHandler: nil)
 
-                                                                                        }, onDismiss: {
+        }, onTextProvided: { [weak self] text in
+            if #available(iOSApplicationExtension 18.0, *) {
+                self?.extensionContext.completeRequest(withTextToInsert: text)
+            }
+        }, onDismiss: {
             self.extensionContext.cancelRequest(withError: NSError(domain: ASExtensionErrorDomain,
                                                                    code: ASExtensionError.userCanceled.rawValue))
         })
@@ -150,20 +170,24 @@ class CredentialProviderViewController: ASCredentialProviderViewController {
         guard let passwordCredential = vaultCredentialManager.fetchCredential(for: credentialIdentity) else {
             self.extensionContext.cancelRequest(withError: NSError(domain: ASExtensionErrorDomain,
                                                                    code: ASExtensionError.credentialIdentityNotFound.rawValue))
+            Pixel.fire(pixel: .autofillExtensionQuickTypeCancelled)
             return
         }
 
         self.extensionContext.completeRequest(withSelectedCredential: passwordCredential)
+        Pixel.fire(pixel: .autofillExtensionQuickTypeConfirmed)
     }
 
     private func provideCredential(for credentialIdentity: ASPasswordCredentialIdentity) {
         guard let passwordCredential = vaultCredentialManager.fetchCredential(for: credentialIdentity) else {
             self.extensionContext.cancelRequest(withError: NSError(domain: ASExtensionErrorDomain,
                                                                    code: ASExtensionError.credentialIdentityNotFound.rawValue))
+            Pixel.fire(pixel: .autofillExtensionQuickTypeCancelled)
             return
         }
 
         self.extensionContext.completeRequest(withSelectedCredential: passwordCredential)
+        Pixel.fire(pixel: .autofillExtensionQuickTypeConfirmed)
     }
 
     private func authenticateAndHandleCredential(provideCredential: @escaping () -> Void) {
@@ -185,5 +209,32 @@ class CredentialProviderViewController: ASCredentialProviderViewController {
                 }
             }
         }
+    }
+
+    private func findKeychainItemsWithV4() -> Bool {
+        var itemsWithV4: [String] = []
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecReturnAttributes as String: kCFBooleanTrue!,
+            kSecMatchLimit as String: kSecMatchLimitAll
+        ]
+
+        var result: AnyObject?
+
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+        if status == errSecSuccess, let items = result as? [[String: Any]] {
+            for item in items {
+                if let service = item[kSecAttrService as String] as? String,
+                   service.contains("v4") {
+                    itemsWithV4.append(service)
+                }
+            }
+        } else {
+            Logger.autofill.debug("No items found or error: \(status)")
+        }
+
+        return !itemsWithV4.isEmpty
     }
 }

@@ -25,6 +25,7 @@ import Common
 import Combine
 import SyncUI
 import DuckPlayer
+import Crashes
 
 import Subscription
 import NetworkProtection
@@ -109,6 +110,7 @@ final class SettingsViewModel: ObservableObject {
         Binding<ThemeName>(
             get: { self.state.appTheme },
             set: {
+                Pixel.fire(pixel: .settingsThemeSelectorPressed)
                 self.state.appTheme = $0
                 ThemeManager.shared.enableTheme(with: $0)
             }
@@ -118,6 +120,7 @@ final class SettingsViewModel: ObservableObject {
         Binding<FireButtonAnimationType>(
             get: { self.state.fireButtonAnimation },
             set: {
+                Pixel.fire(pixel: .settingsFireButtonSelectorPressed)
                 self.appSettings.currentFireButtonAnimation = $0
                 self.state.fireButtonAnimation = $0
                 NotificationCenter.default.post(name: AppUserDefaults.Notifications.currentFireButtonAnimationChange, object: self)
@@ -138,6 +141,7 @@ final class SettingsViewModel: ObservableObject {
                 self.state.addressBar.position
             },
             set: {
+                Pixel.fire(pixel: $0 == .top ? .settingsAddressBarTopSelected : .settingsAddressBarBottomSelected)
                 self.appSettings.currentAddressBarPosition = $0
                 self.state.addressBar.position = $0
             }
@@ -148,6 +152,7 @@ final class SettingsViewModel: ObservableObject {
         Binding<Bool>(
             get: { self.state.showsFullURL },
             set: {
+                Pixel.fire(pixel: $0 ? .settingsShowFullURLOn : .settingsShowFullURLOff)
                 self.state.showsFullURL = $0
                 self.appSettings.showFullSiteAddress = $0
             }
@@ -373,6 +378,10 @@ final class SettingsViewModel: ObservableObject {
         Binding<Bool>(
             get: { self.state.crashCollectionOptInStatus == .optedIn },
             set: {
+                if self.appSettings.crashCollectionOptInStatus == .optedIn && $0 == false {
+                    let crashCollection = CrashCollection(crashReportSender: CrashReportSender(platform: .iOS, pixelEvents: CrashReportSender.pixelEvents))
+                    crashCollection.clearCRCID()
+                }
                 self.appSettings.crashCollectionOptInStatus = $0 ? .optedIn : .optedOut
                 self.state.crashCollectionOptInStatus = $0 ? .optedIn : .optedOut
             }
@@ -598,6 +607,7 @@ extension SettingsViewModel {
     }
 
     func openMoreSearchSettings() {
+        Pixel.fire(pixel: .settingsMoreSearchSettings)
         UIApplication.shared.open(URL.searchSettings)
     }
 
