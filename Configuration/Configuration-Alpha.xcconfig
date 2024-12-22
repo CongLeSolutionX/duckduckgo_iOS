@@ -18,7 +18,7 @@
 //
 
 #include "DuckDuckGoDeveloper.xcconfig"
-#include? "ExternalDeveloper.xcconfig"
+#include "ExternalDeveloper.xcconfig"
 #include? "Version.xcconfig"
 
 // The app bundle identifier

@@ -14,7 +14,7 @@
 //
 
 #include "DuckDuckGoDeveloper.xcconfig"
-#include? "ExternalDeveloper.xcconfig"
+#include "ExternalDeveloper.xcconfig"
 #include? "Version.xcconfig"
 
 DDG_SLOW_COMPILE_CHECK_THRESHOLD = 100

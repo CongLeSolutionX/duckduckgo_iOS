@@ -9,7 +9,8 @@
 	<key>com.apple.security.application-groups</key>
 	<array>
 		<string>$(GROUP_ID_PREFIX).netp</string>
-		<string>group.com.duckduckgo.app-configuration</string>
+		<string>group.com.CongleSolutionX.Sharing</string>
+		<string>group.example.apple-samplecode.Backyard-Birds99WD9D6Y46</string>
 	</array>
 	<key>keychain-access-groups</key>
 	<array>
